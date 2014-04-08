@@ -1,0 +1,353 @@
+/*-*-sql-*-*******************************************************************
+
+/* 
+
+  Help directives and skeleton for the HITS and PageRank algorithms and tasks 
+  in DM II assignment 1. Read all comments and code. 
+
+  Students are expected to follow the directives and complete / replace 
+  / correct code where necessary (marked with TODO) according 
+  to the function signatures, descriptions, HINTS, and NOTES.
+  Students are encouraged to experiment with explicit or implicit 
+  options and alternative implementations. 
+
+*/
+
+
+/* Useful string function definition: replace(), explodeon(), 
+  exlode(), infront(), back() */
+load_lisp("string.lsp");
+
+/******************************************/
+/* URL normalization function definitions */
+/******************************************/
+
+create function removeProtocol(Charstring url)->Charstring
+ as replace(url, "HTTP://","");
+
+
+create function lastChar(Charstring s)->Charstring
+ as substring(s,char_length(s)-1,char_length(s)-1);
+
+create function allButLastChar(Charstring s)->Charstring
+/* TODO: Rerurn all but the last characters of input string s */ 
+ as substring(s,0,char_length(s)-2);
+
+/* TODO: Remove trailing slash from url.
+  HINT: Use if-statement and the function lastChar().
+        A function that uses the if-statement is a 
+        stored procedure. Hence one must use the 
+        return statement to emit tuples. */
+create function removeTrailingSlash(Charstring url)->Charstring 
+ as begin
+	if lastChar(url)="/"
+	then return allButLastChar(url)
+	else return url
+end;
+
+ 
+
+create function removeINDEXdotHTML(Charstring url)->Charstring 
+/* TODO: Remove "INDEX.HTML" from url.
+  HINT: Use function replace(). */
+ as replace(url,"INDEX.HTML",""); 
+
+create function normalizeURL(Charstring url)->Charstring
+/* Performs simple URL normalization */ 
+ as removeTrailingSlash(removeINDEXdotHTML(removeProtocol(upper(url))));
+
+/*********************************************/
+/* DB represeantion of pages + linkage graph */
+/* and utilities to load / view data         */
+/*********************************************/ 
+
+/* Create a stored function / relation pages() */
+create function pages()->Bag of Charstring p as stored;
+/* TODO: Place an index on pages() if desirable */
+
+create_index("pages","p","hash","unique");
+
+/* Create a stored function / relation links() */ 
+create function links(Charstring f)->Bag of Charstring t as stored;
+
+/* Place an index on links() if desirable */
+create_index("links","t","hash","multiple");
+
+create function populateLinks(Vector of Charstring vl)->Boolean
+/* Populates the function links() from a adjecency list vector of a page 
+  Also normalize the URLs of the pages */
+ as add links(NormalizeURL(vl[0]))=NormalizeURL(vl[i]) 
+    from Integer i
+    where i > 0;
+
+create function addPage(Charstring p)->Boolean
+/* Adds a page to the function pages() 
+  Also normalizes the URL of page p */
+ as add pages()=NormalizeURL(p);
+
+create function loadLinks(Charstring file)->Boolean
+/* Populates the function links() from an linkage FILE where
+  each line contains an adjecency list separated by space. */
+ as populateLinks(cast(read_ntuples(file) as Vector of Charstring));
+
+create function loadPages(Charstring file)->Boolean
+/* Populates the function pages() from an linkage FILE where
+  each line contains an adjacency list separated by space. 
+  The *first* page on such a list is the page that is added to pages() */
+ as addPage(cast(read_ntuples(file)[0] as Charstring));
+
+create function showLinks()->Bag of <Charstring, Charstring>
+/* Shows the contents of the function links() */
+ as select f, t 
+    from Charstring f, Charstring t
+    where t in links(f);
+
+/* showPages(): simply call pages(); */
+
+create function showDeadPages()->Bag of Charstring
+/* TODO: Return the page f if we do not know the link structure 
+        of f, i.e., f is not in pages() but links(dummy)=f is *not* NIL. 
+  HINT: Use stored functions links() and pages() and the notany()
+        Boolean operator / function. See manual!
+  NOTE: These are not the pages that do not link to pages!!! */
+ as select dead from Charstring dead, Charstring page
+    	   where page in pages() and dead in links(page) and notany(dead in pages());
+
+create function removeDeadLinks()->Boolean
+/* TODO: Remove all links to a page f if we do not know 
+  the link structure of f, i.e., f is not in pages(), but 
+  links(dummy)=f is not NIL.
+  HINT : Use the remove statement and the function showdeadPages(). 
+  NOTE: These are not the pages that do not link to pages!!! */
+ as 
+	for each Charstring t where t in pages()
+	begin
+	
+end;
+
+
+/* Note that deleting a link from page f to t, where f only likns to t
+  will make f look like a page with no links. One could perform an 
+  iterative removal or pages and links as shown bellow but this will
+  potentially drastically shrink the graph, which might be undesierable. 
+  Hence, as part of the proprocessing a single step of deadLink removal 
+  is proposed. Note that in this step a page p to which the links are 
+  removed, by definition is not present in the function pages, hence 
+  no page removal is necessary. */   
+
+/* Iterative link removal: not used! */
+create function removeDeadLinks_iterator(Integer ndl) -> Integer as
+/* Iterator function to remove read links from
+  the function links */
+begin	
+ removeDeadLinks();
+ return count(showDeadPages());
+end;
+
+create function removeAllDeadLinks()-> Object
+/* Function for iterative removal of links via tclose */
+ as iterate(#'removeDeadLinks_iterator', 100, -1);
+
+/**********************************/
+/* Other common functionality     */
+/**********************************/
+
+create function load_data(Charstring file) -> Boolean as
+begin
+ /* clear the data */
+ clear_function('links');	
+ clear_function('pages');
+ /* load links and pages */
+ loadLinks(file);		 
+ loadPages(file);   
+ /* remove dead links */
+ /*removeDeadLinks();	*/
+end;
+
+create function sse(Vector of Number a, Vector of Number b)->Number
+/* TODO: Calculate the sum square error between two vectors. 
+  Used to check convergence of iterative calculation. */
+ as 1;
+
+
+/**********************************/
+/* HITS algorithm                 */
+/**********************************/
+
+/* Stored functions / relations to store the authority and hubiness of pages */
+create function authority(Charstring p)->Number a as stored;
+/* Place an index on authority() if desirable */
+
+create function hubbiness(Charstring p)->Number h as stored;
+/* Place an index on aubbiness() if desirable */
+
+create function showAuthority()->Bag of (Number, Charstring)
+/* Returns the authority and page name for all pages */
+ as select roundto(a,5), p 
+    from Charstring p, Number a
+    where a = authority(p);
+
+create function showHubbiness()->Bag of (Number, Charstring)
+/* Returns the hubbiness and page name for all pages */
+ as select roundto(h,5), p 
+    from Charstring p, Number h
+    where h = hubbiness(p);
+
+create function initializeHITS()->Boolean
+/* Sets initial values of hubbiness and authority of all the pages */
+as for each Charstring p where p in pages()
+  begin
+    set hubbiness(p)=1;
+    set authority(p)=1;
+  end;
+
+create function calculateAuthority(Charstring p)->Number 
+/* TODO: Calculate the authority of page p. 
+  HINT: Use the aggregate function sum(). */
+ as 1;
+
+create function calculateHubbiness(Charstring p)->Number 
+/* TODO: Calculate the hubbiness of a page 
+  HINT: Use the aggregate function sum(). */
+ as 1;
+
+create function updateAuthority()->Boolean
+/* Updates the authority values of pages based on the 
+  hubbiness values of the pages that link to them. */
+ as set authority(p) = calculateAuthority(p)
+    from Charstring p
+    where p in pages();
+
+create function updateHubbiness()->Boolean
+/* TODO: Update the hubbiness values of pages based on the 
+  authority values of the pages that they link to. */
+as TRUE; 
+
+create function enorm(Bag of Number b)->Number
+/* Calculates the Euclidean norm of a bag of numbers. */
+ as sqrt(sum(select power(n,2) 
+             from Number n 
+             where n in b));
+
+create function normalizeAuthority()->Boolean
+/*  Normalizes Authority() to unit length */ 
+ as set authority(p) = authority(p) / lenAuth
+    from Charstring p, Number lenAuth
+    where p in pages()
+      and lenAuth = enorm(authority(pages()));
+
+create function normalizeHubbiness()->Boolean
+/*  TODO: Normalize Hubbiness() to unit length */ 
+ as TRUE;
+
+create function HITS_iterator(Number input)->Number as
+/* Iterative step of the HITS algorithm, 
+  input is not used, return summary SSE between the results 
+  of new and previous iterations */ 
+begin
+ declare Vector of Number a0, Vector of Number h0;
+ set a0 = vectorof(authority(pages()));
+ set h0 = vectorof(hubbiness(pages()));
+ updateAuthority();
+ updateHubbiness();
+ normalizeAuthority();
+ normalizeHubbiness();
+ /* Compare the SSE results down to 10^-3 precision */
+ return roundto((sse(a0, vectorof(authority(pages()))) + 
+                 sse(h0, vectorof(hubbiness(pages())))),
+                3);      
+end;
+
+create function HITS(Charstring file)->Bag of (Number, Charstring) as
+/* The HITS algorithm including loading, preprocessing, 
+  iteration until convergence, and display of top10 results.  */
+begin
+ /* load the data */
+ load_data(file);
+ /* empty stored Authority and Hubbiness */ 
+ clear_function('authority');	
+ clear_function('hubbiness');
+ /* initialize authority and hubbiness of pages to 1 */
+ initializeHITS();			
+ /* normalize authority and hubbiness of pages to unit length */
+ normalizeAuthority();		
+ normalizeHubbiness();  
+ /* iteration until convergence, max 100 steps */ 
+ iterate(#"HITS_iterator", 100, -1); /* input is not important */
+ /* Output top 10 hubby and authoritative pages */
+ dp('Hubbiness', 100);
+ return (topk(showHubbiness(),10));
+ dp('Authority', 100);
+ return (topk(showAuthority(),10));
+end;
+
+/**********************************/
+/* PageRank algorithm             */
+/**********************************/
+
+/* Stored functions / relations to store the authority and hubiness of pages */
+create function rank(Charstring p) -> Number as stored;
+/* Place an index on authority() if desirable */
+
+/* Stored function / relation to store number of outlinks from pages */
+create function outlinks(Charstring p) -> Number as stored;
+
+create function updateOutlinks() -> Boolean
+/* Update function outlinks() for every page 
+  with the number of links leading from that page. */
+ as set outlinks(p) = count(links(p))
+   from Charstring p, Charstring q
+  where q in links(p);
+
+create function initializePageRank(Number N) -> Boolean
+/* TODO: Set initial values for rank of all pages */
+as TRUE;
+
+create function calculateRank(Charstring p, Number d, Number N)->Number 
+/* TODO: Calculate the rank of a page 
+  HINT: Use the aggregate functions sum() and count(). */
+as 1;
+
+create function updateRank(Number d, Number N)->Boolean
+/* Updates the authority values of pages based on the 
+  hubbiness values of the pages that link to them. */
+ as set rank(p) = calculateRank(p, d, N)
+    from Charstring p
+    where p in pages();
+
+create function showRank()->Bag of (Number, Charstring)
+/* TODO: Returns the rank and page name for all pages */
+ as 1, 'page';
+
+create function pageRank_iterator(Vector of Number sse_d_N)-> Vector of Number as
+/* Iterative step of the PageRank algorithm.
+  Parameter d is the dampening factor, N is the number of pages, input is not used, 
+  return SSE between the results of new and previous iterations */
+begin
+ declare Vector of Number r0;
+ set r0 = vectorof(rank(pages()));
+ updateRank(sse_d_N[1], sse_d_N[2]); 
+ return {roundto(sse(r0, vectorof(rank(pages()))), 3), sse_d_N[1], sse_d_N[2]};
+end;
+
+create function PageRank(Charstring file, Number d)->Bag of (Number, Charstring) as
+/* The PageRank algorithm including loading, preprocessing, 
+  iteration until convergence, and display of top10 results.
+  Parameter d is the dampening factor  */
+begin
+ declare Number N;
+ /* load the data */
+ load_data(file);
+ set N = count(pages());
+ /* empty and compute the stored numbers of outlinks */
+ clear_function('outlinks');
+ updateOutlinks();			
+ /* empty stored rank */ 
+ clear_function('rank');	
+ /* initialize rank of pages to 1 */
+ initializePageRank(N);
+ /* iteration until convergence, mas 100 iterations */ 
+ iterate(#'pageRank_iterator', 100, {-1, 1, 4}); /* input SSE is ignored */
+ /* Output top 10 ranked pages */
+ return (topk(showRank(),10));
+end;
