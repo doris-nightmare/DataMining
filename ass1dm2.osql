@@ -119,11 +119,9 @@ create function removeDeadLinks()->Boolean
   links(dummy)=f is not NIL.
   HINT : Use the remove statement and the function showdeadPages(). 
   NOTE: These are not the pages that do not link to pages!!! */
- as 
-	for each Charstring t where t in pages()
-	begin
-	
-end;
+ as remove links(page) = dead 
+    	   from Charstring dead, Charstring page
+	   where page in pages() and dead in showDeadPages(); 
 
 
 /* Note that deleting a link from page f to t, where f only likns to t
@@ -161,13 +159,16 @@ begin
  loadLinks(file);		 
  loadPages(file);   
  /* remove dead links */
- /*removeDeadLinks();	*/
+  removeDeadLinks();	
 end;
+
+/* test load_data */
+load_data('links_java_coffee.nt');
 
 create function sse(Vector of Number a, Vector of Number b)->Number
 /* TODO: Calculate the sum square error between two vectors. 
   Used to check convergence of iterative calculation. */
- as 1;
+ as euclid(a,b);
 
 
 /**********************************/
@@ -204,12 +205,13 @@ as for each Charstring p where p in pages()
 create function calculateAuthority(Charstring p)->Number 
 /* TODO: Calculate the authority of page p. 
   HINT: Use the aggregate function sum(). */
- as 1;
+ as 
+   sum(select hubbiness(j) from Charstring j where p in links(j));
 
 create function calculateHubbiness(Charstring p)->Number 
 /* TODO: Calculate the hubbiness of a page 
   HINT: Use the aggregate function sum(). */
- as 1;
+ as sum(select authority(j) from Charstring j where j in links(p));
 
 create function updateAuthority()->Boolean
 /* Updates the authority values of pages based on the 
@@ -221,7 +223,8 @@ create function updateAuthority()->Boolean
 create function updateHubbiness()->Boolean
 /* TODO: Update the hubbiness values of pages based on the 
   authority values of the pages that they link to. */
-as TRUE; 
+as set hubbiness(p) = calculateHubbiness(p)
+   from Charstring p where p in pages();
 
 create function enorm(Bag of Number b)->Number
 /* Calculates the Euclidean norm of a bag of numbers. */
@@ -238,7 +241,10 @@ create function normalizeAuthority()->Boolean
 
 create function normalizeHubbiness()->Boolean
 /*  TODO: Normalize Hubbiness() to unit length */ 
- as TRUE;
+ as set hubbiness(p) = hubbiness(p) /lenHub
+ from Charstring p, Number lenHub
+ where p in pages()
+       and lenHub = enorm(hubbiness(pages()));
 
 create function HITS_iterator(Number input)->Number as
 /* Iterative step of the HITS algorithm, 
@@ -281,6 +287,9 @@ begin
  return (topk(showAuthority(),10));
 end;
 
+
+HITS('test.nt');
+
 /**********************************/
 /* PageRank algorithm             */
 /**********************************/
@@ -301,12 +310,23 @@ create function updateOutlinks() -> Boolean
 
 create function initializePageRank(Number N) -> Boolean
 /* TODO: Set initial values for rank of all pages */
-as TRUE;
+as for each Charstring p where p in pages()
+   begin
+	set rank(p) = 1/N;  /* stochastic*/
+   end;
 
 create function calculateRank(Charstring p, Number d, Number N)->Number 
 /* TODO: Calculate the rank of a page 
   HINT: Use the aggregate functions sum() and count(). */
-as 1;
+as 
+   begin
+   declare Number weighted_sum;
+   set weighted_sum = sum(select rank(i) / outlinks(i)
+       		      		 from Charstring i
+				 where p in links(i));
+   set rank(p) = (1-d)/N + d * weighted_sum;
+   end;
+   
 
 create function updateRank(Number d, Number N)->Boolean
 /* Updates the authority values of pages based on the 
@@ -317,7 +337,9 @@ create function updateRank(Number d, Number N)->Boolean
 
 create function showRank()->Bag of (Number, Charstring)
 /* TODO: Returns the rank and page name for all pages */
- as 1, 'page';
+ as select roundto(pr,5),p
+    from Charstring p, Number pr
+    where pr = rank(p);
 
 create function pageRank_iterator(Vector of Number sse_d_N)-> Vector of Number as
 /* Iterative step of the PageRank algorithm.
@@ -351,3 +373,6 @@ begin
  /* Output top 10 ranked pages */
  return (topk(showRank(),10));
 end;
+
+/* test page rank */
+PageRank('test2.nt',0.8);
