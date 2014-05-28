@@ -1,0 +1,59 @@
+/*-*-sql-*-*/
+
+load_lisp('../ClusterGenerator/spherical.lsp');
+
+/* This partition of the dataset is generated and stored on the current node */
+create function partition() -> Bag of Vector of Number as stored;
+
+load_lisp('../AmosMiner/MiningFunctions/sampling.lsp');
+
+/* Select k samples from partition() */
+create function sample_partition(Integer k) -> Bag of Vector of Object as sample(partition(),k);
+
+/* TODO: Get nearest centroid among vc for the given datapoint p, return distance and centroid id 
+   Use euclidean distance
+   HINT: leastk() might help selecting desired tuple from a bag of (key, value) pairs               */
+create function get_nearest_centroid_id(Vector of Number p, Vector of Vector of Number vc)  -> (Number d, Integer nci) as  
+	select leastk(
+	(select euclid(p,c), nci 
+	from Integer nci, 
+	Vector rvc,
+	Vector rvc1,
+	Vector of Number c 
+	where rvc in vc and rvc1 = rvc[1] and c = rvc1[1] and nci=rvc[0] ),1);
+
+/* TODO: Return nearest centroid id for each datapoint in partition()                               */
+create function classify_partition(Vector of Vector of Number vc) 
+                                  -> Bag of (Integer nci, Vector of Number p)
+  as select nci, p from Integer nci, Vector of Number p, Number d
+     where p in partition() and (d,nci) = get_nearest_centroid_id(p,vc);
+
+select 1, {0.0, 0.0};
+
+/* TODO: Return count and mean vector for a given bag of vectors
+         in form {count, {coordinate, ...}} 
+   HINT: use count() and aggv() aggregate functions                                                 */
+create function count_col_means(Bag of Vector of Number bv) -> Vector
+  as vectorof(select cnt, vect_mean from Integer cnt, Vector of Number vect_mean
+     where cnt = count(bv) 
+     	   and vect_mean = aggv((select v from vector v where v in bv),#'avg'));
+
+
+select {1, {0.0, 0.0}};
+
+/* Return kmeans iteration results for given vector of centroids 
+   in from {id, {count, {coodinate, ...}}} */
+create function kmeans_node_step(Vector of Vector of Number vc)
+                               -> Bag of Vector as
+  select {nci, count_avg} from Integer nci, Vector count_avg
+   where (nci, count_avg) in groupby(classify_partition(vc), #'count_col_means');
+
+/* Adapter to ship the classified data for visualisation
+   in form {coordinate, ..., id} */
+create function classify_partition_node(Vector of Vector of Number vc)
+                                        -> Bag of Vector as
+  select concat(v,{nci}) from Vector v, Integer nci
+   where (nci, v) in classify_partition(vc);
+
+
+

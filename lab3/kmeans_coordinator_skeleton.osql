@@ -1,0 +1,60 @@
+/*-*-sql-*-*/
+
+/* Make a vector containing K instances of X */
+create function replicate(Object x, Integer k) -> Vector
+as vectorize(select i, x from Integer i where i in iota(0,k-1));
+
+/* A simplified wrapper around multicastreceive - same function, same args to all other peers */
+create function castreceive(Charstring fn, Object args) -> Bag of Object
+as select multicastreceive(vpeers, fn, replicate(args, dim(vpeers)))
+     from Vector of Charstring vpeers
+    where vpeers = vectorof(other_peers());
+
+/* Two-phase sampling of datapoints */
+load_lisp('../AmosMiner/MiningFunctions/sampling.lsp');
+
+/* TODO: Multiply coordinates by weight, assumed argument structure {weight, {coordinate, ...}} 
+   HINT: use cast(... as Number) to retreve the numebers from different levels of the vector    */
+create function w_times_v(Vector wv) -> Vector of Number as
+  begin
+	declare Number w, Vector of Number v;
+	set w = wv[0];
+	set v = wv[1];
+	return vectorof((select w * v[i] from Integer i where i in iota(0,dim(v) -1)));
+  end;
+
+/* TODO: Compute weighted average vector of vectors given in form {weight, {coordinate, ...}}  */
+create function weighted_col_means(Bag of Vector bwv) -> Vector of Number as
+  begin
+	declare Integer cnt, Vector wv, Vector of Number v, Scan c;
+	open c for bwv;
+	set v= zeros(dim(first(bwv)));
+	while more(c)
+	do 
+	   fetch c into wv;
+	   set v = v + w_times_v(wv);
+	end while;
+	set cnt = count (bwv);
+	return div(v,cnt);
+  end;
+
+
+select v from Vector v where v in ({{1,{2,3}},{3,{3,4}}});
+
+
+/* TODO: Compute average centroids based on new centroids received from peers 
+   HINT: use the above-defined weighted_col_means() as an aggregate function,
+         see the data structure returned by kmeans_node_step(),
+         vectorize() to get collect the groups results into a new vector of centroids           */
+
+create function parallel_kmeans_step(Vector of Vector of Number vc) -> Vector of Vector of Number as
+  vectorof(select {nci,weighted_avg} from Integer nci, Vector weighted_avg
+  where (nci, weighted_avg) in groupby(kmeans_node_step(vc),#'weighted_col_means'));
+
+
+{{0.0, 0.0}, {0.0, 1.0}}
+
+/* Run iterations until centroids are stable */
+create function parallel_kmeans(Vector of Vector of Number vc0) -> Vector of Vector of Number
+  as iterate(#'parallel_kmeans_step', 100, vc0);
+
